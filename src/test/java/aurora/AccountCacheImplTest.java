@@ -107,19 +107,42 @@ public class AccountCacheImplTest {
 
   @Test
   public void testManyPutAndGet() {
-    Random random = new Random();
     List<Account> allAccounts = new ArrayList<Account>();
     for (int i = 0; i < 100; i++) {
       int accountId = i;
-      updateLock.lock();
-      try {
+      Account account = new Account(accountId, this.generateRandomBalance());
+      accountCache.putAccount(account);
+      assertTop3AccountsAreCorrect(account, allAccounts);
+      assertEquals(account, accountCache.getAccountById(accountId));
+    }
+  }
+
+  @Test
+  public void testzMultiThreadedPutAndGet() throws InterruptedException {
+    List<Account> allAccounts = new ArrayList<Account>();
+    List<List<List<Account>>> top3AccountResults = new ArrayList<List<List<Account>>>();
+    ExecutorService executor = Executors.newFixedThreadPool(50);
+    for (int i = 0; i < 1000; i++) {
+      int accountId = i;
+      executor.submit(() -> {
         Account account = new Account(accountId, this.generateRandomBalance());
-        accountCache.putAccount(account);
-        assertTop3AccountsAreCorrect(account, allAccounts);
-        assertEquals(account, accountCache.getAccountById(accountId));
-      } finally {
-        updateLock.unlock();
-      }
+        updateLock.lock();
+        try {
+          accountCache.putAccount(account);
+          List<List<Account>> top3AccountResult = assertTop3AccountsAreCorrect(account, allAccounts);
+          top3AccountResults.add(top3AccountResult);
+        } finally {
+          updateLock.unlock();
+        }
+      });
+    }
+    executor.shutdown();
+    executor.awaitTermination(1, TimeUnit.MINUTES);
+    for (List<List<Account>> top3AccountPair: top3AccountResults) {
+      assertEquals(top3AccountPair.size(), 2);
+      List<Account> expectedTop3Accounts = top3AccountPair.get(0);
+      List<Account> actualTop3Accounts = top3AccountPair.get(1);
+      assertEquals(expectedTop3Accounts, actualTop3Accounts);
     }
   }
 
@@ -144,12 +167,24 @@ public class AccountCacheImplTest {
     }
   }
 
-  private void assertTop3AccountsAreCorrect(Account newAccount, List<Account> allAccounts) {
+  private List<List<Account>> assertTop3AccountsAreCorrect(Account newAccount, List<Account> allAccounts) {
     List<Account> actualTop3Accounts = accountCache.getTop3AccountsByBalance();
     allAccounts.add(newAccount);
     List<Account> expectedTop3Accounts = getExpectedTop3Accounts(allAccounts);
     printTop3Accounts(expectedTop3Accounts, actualTop3Accounts);
-    assertEquals(actualTop3Accounts, expectedTop3Accounts);
+    assertEquals(expectedTop3Accounts, actualTop3Accounts);
+    List<List<Account>> result = new ArrayList<List<Account>>();
+    result.add(cloneListAccount(expectedTop3Accounts));
+    result.add(cloneListAccount(actualTop3Accounts));
+    return result;
+  }
+
+  private List<Account> cloneListAccount(List<Account> source) {
+    List<Account> dest = new ArrayList<Account>();
+    for (Account acc : source) {
+      dest.add(new Account(acc.id, acc.getBalance()));
+    }
+    return dest;
   }
 
   private List<Account> getExpectedTop3Accounts(List<Account> allAccounts) {
