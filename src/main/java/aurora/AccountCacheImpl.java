@@ -1,22 +1,21 @@
 package aurora;
 
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
 
 public class AccountCacheImpl implements AccountCache {
 
-  private final LinkedHashMapExtend<Long, Account> cacheMap;
+  protected final LinkedHashMapExtend<Long, Account> cacheMap;
   private Consumer<Account> accountListener;
-  private List<Account> top3AccountsByBalance;
-  private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
+  protected final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
+  private ExecutorService listenerThreadPool = Executors.newFixedThreadPool(10);
 
   public AccountCacheImpl(int capacity) {
     this.cacheMap = new LinkedHashMapExtend<Long, Account>(capacity, 0.75f, true);
-    top3AccountsByBalance = new ArrayList<>();
   }
 
   @Override
@@ -36,14 +35,36 @@ public class AccountCacheImpl implements AccountCache {
 
   @Override
   public void subscribeForAccountUpdates(Consumer<Account> listener) {
-    this.accountListener = listener;
+    lock.writeLock().lock();
+    try {
+      this.accountListener = listener;
+    } finally {
+      lock.writeLock().unlock();
+    }
   }
 
   @Override
   public List<Account> getTop3AccountsByBalance() {
     lock.readLock().lock();
     try {
-      return Collections.unmodifiableList(top3AccountsByBalance);
+      Account max1 = null, max2 = null, max3 = null;
+      for (Account acc : cacheMap.values()) {
+          if (max1 == null || acc.balance > max1.balance) {
+              max3 = max2;
+              max2 = max1;
+              max1 = acc;
+          } else if (max2 == null || acc.balance > max2.balance) {
+              max3 = max2;
+              max2 = acc;
+          } else if (max3 == null || acc.balance > max3.balance) {
+              max3 = acc;
+          }
+      }
+      List<Account> result = new ArrayList<>();
+      if (max1 != null) result.add(new Account(max1.getId(), max1.getBalance()));
+      if (max2 != null) result.add(new Account(max2.getId(), max2.getBalance()));
+      if (max3 != null) result.add(new Account(max3.getId(), max3.getBalance()));
+      return result;
     } finally {
       lock.readLock().unlock();
     }
@@ -59,70 +80,18 @@ public class AccountCacheImpl implements AccountCache {
     }
   }
   
-  /**
-   * Updates the top 3 accounts by balance based on changes to the cache.
-   *
-   * @param oldAccount the previous account associated with the ID, if any
-   * @param newAccount the new account being added to the cache
-   */
-  private void updateTop3AccountsByBalance(Account oldAccount, Account newAccount) {
-    // If the size of the top 3 accounts is less than 3, simply add the new account if it's not already in the list.
-    if (top3AccountsByBalance.size() < 3) {
-      if (oldAccount != null) {
-        top3AccountsByBalance.remove(oldAccount);
-      }
-      top3AccountsByBalance.add(newAccount);
-    } else {
-      // If the size of the top 3 accounts is equal to 3, determine whether to replace one of them with the new account.
-      if (oldAccount == null || !top3AccountsByBalance.contains(oldAccount)) {
-        // If the old account is null (indicating an addition) or not found in the top 3, compare balances to determine replacement.
-        if (newAccount.getBalance() > top3AccountsByBalance.get(top3AccountsByBalance.size() - 1).getBalance()) {
-          // If the balance of the new account is greater than the smallest balance in the top 3, replace the smallest with the new account.
-          top3AccountsByBalance.remove(top3AccountsByBalance.get(2));
-          top3AccountsByBalance.add(newAccount);
-        }
-      } else {
-        // If the old account is found in the top 3, compare balances to determine whether replacement or addition is needed.
-        if (newAccount.getBalance() >= oldAccount.getBalance()
-          || newAccount.getBalance() >= top3AccountsByBalance.get(top3AccountsByBalance.size() - 1).getBalance()
-        ) {
-          // If the balance of the new account is greater than or equal to the old account's balance or the smallest balance in the top 3, replace the old with the new account.
-          top3AccountsByBalance.remove(oldAccount);
-          top3AccountsByBalance.add(newAccount);
-        } else {
-          // If the balance of the new account is smaller than both the old account's balance and the smallest balance in the top 3, find a suitable replacement among other accounts in the cache.
-          Account candidate = null;
-          for (Account account : this.cacheMap.values()) {
-            if (!top3AccountsByBalance.contains(account) && (candidate == null || account.getBalance() > candidate.getBalance())) {
-              candidate = account;
-            }
-          }
-          // If a suitable replacement is found, add it to the top 3 accounts list.
-          if (candidate != null) {
-            if (top3AccountsByBalance.size() == 3) {
-              top3AccountsByBalance.remove(oldAccount);
-            }
-            top3AccountsByBalance.add(candidate);
-          }
-        }
-      }
-    }
-    // Sort the top 3 accounts by balance in descending order.
-    top3AccountsByBalance.sort(Comparator.comparingLong(Account::getBalance).reversed());
-  }
-
   @Override
   public void putAccount(Account account) {
     lock.writeLock().lock();
     try {
       Account accountCopy = new Account(account.id, account.getBalance());
-      Account oldAccount = cacheMap.put(accountCopy.id, accountCopy);
-      if (oldAccount != null && !oldAccount.equals(accountCopy) && this.accountListener != null) {
-        this.accountListener.accept(accountCopy);
-      }
-      this.updateTop3AccountsByBalance(oldAccount, accountCopy);
+      cacheMap.put(accountCopy.id, accountCopy);
     } finally {
       lock.writeLock().unlock();
+    }
+    if (this.accountListener != null) {
+      Account accountForSubscribe = new Account(account.id, account.getBalance());
+      this.listenerThreadPool.execute(() -> this.accountListener.accept(accountForSubscribe));
     }
   }
 }

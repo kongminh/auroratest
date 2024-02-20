@@ -21,7 +21,7 @@ import java.util.Random;
  */
 public class AccountCacheImplTest {
 
-  private AccountCacheImpl accountCache;
+  private AccountCacheImplExtendForTest accountCache;
   private Consumer<Account> accountListenerMock;
   private Random random;
   private final Lock printLock = new ReentrantLock();
@@ -29,7 +29,7 @@ public class AccountCacheImplTest {
 
   @Before
   public void setUp() {
-    accountCache = new AccountCacheImpl(5);
+    accountCache = new AccountCacheImplExtendForTest(5);
     accountListenerMock = mock(Consumer.class);
     accountCache.subscribeForAccountUpdates(accountListenerMock);
     random = new Random();
@@ -107,19 +107,17 @@ public class AccountCacheImplTest {
 
   @Test
   public void testManyPutAndGet() {
-    List<Account> allAccounts = new ArrayList<Account>();
     for (int i = 0; i < 100; i++) {
       int accountId = i;
       Account account = new Account(accountId, this.generateRandomBalance());
       accountCache.putAccount(account);
-      assertTop3AccountsAreCorrect(account, allAccounts);
+      assertTop3AccountsAreCorrect(account, new ArrayList<Account>(accountCache.getAllAccounts()));
       assertEquals(account, accountCache.getAccountById(accountId));
     }
   }
 
   @Test
   public void testzMultiThreadedPutAndGet() throws InterruptedException {
-    List<Account> allAccounts = new ArrayList<Account>();
     List<List<List<Account>>> top3AccountResults = new ArrayList<List<List<Account>>>();
     ExecutorService executor = Executors.newFixedThreadPool(50);
     for (int i = 0; i < 1000; i++) {
@@ -129,7 +127,8 @@ public class AccountCacheImplTest {
         updateLock.lock();
         try {
           accountCache.putAccount(account);
-          List<List<Account>> top3AccountResult = assertTop3AccountsAreCorrect(account, allAccounts);
+          List<List<Account>> top3AccountResult =
+            assertTop3AccountsAreCorrect(account, new ArrayList<Account>(accountCache.getAllAccounts()));
           top3AccountResults.add(top3AccountResult);
         } finally {
           updateLock.unlock();
@@ -169,7 +168,6 @@ public class AccountCacheImplTest {
 
   private List<List<Account>> assertTop3AccountsAreCorrect(Account newAccount, List<Account> allAccounts) {
     List<Account> actualTop3Accounts = accountCache.getTop3AccountsByBalance();
-    allAccounts.add(newAccount);
     List<Account> expectedTop3Accounts = getExpectedTop3Accounts(allAccounts);
     printTop3Accounts(expectedTop3Accounts, actualTop3Accounts);
     assertEquals(expectedTop3Accounts, actualTop3Accounts);

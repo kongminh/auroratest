@@ -20,8 +20,7 @@ public interface AccountCache {
   void subscribeForAccountUpdates(Consumer<Account> listener);
   /**
   * @return top 3 accounts by balance, sorted from the largest balance
-  * to the smallest one. Accounts in the top 3 may no longer be in
-  * this cache
+  * to the smallest one
   */
   List<Account> getTop3AccountsByBalance();
  
