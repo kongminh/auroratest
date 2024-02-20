@@ -122,6 +122,11 @@ public class AccountCacheImplTest {
       int accountId = i;
       Account account = new Account(accountId, this.generateRandomBalance());
       accountCache.putAccount(account);
+      if (i > 0) {
+        accountCache.getAccountById(random.nextInt(i));
+        Account accountUpdate = new Account(random.nextInt(i), this.generateRandomBalance());
+        accountCache.putAccount(accountUpdate);
+      }
       assertTop3AccountsAreCorrect(account, new ArrayList<Account>(accountCache.getAllAccounts()));
       assertEquals(account, accountCache.getAccountById(accountId));
     }
@@ -138,6 +143,11 @@ public class AccountCacheImplTest {
         updateLock.lock();
         try {
           accountCache.putAccount(account);
+          if (accountId > 0) {
+            accountCache.getAccountById(random.nextInt(accountId));
+            Account accountUpdate = new Account(random.nextInt(accountId), this.generateRandomBalance());
+            accountCache.putAccount(accountUpdate);
+          }
           List<List<Account>> top3AccountResult =
             assertTop3AccountsAreCorrect(account, new ArrayList<Account>(accountCache.getAllAccounts()));
           top3AccountResults.add(top3AccountResult);
