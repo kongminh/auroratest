@@ -15,6 +15,8 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Random;
+import static org.awaitility.Awaitility.await;
+import static java.util.concurrent.TimeUnit.SECONDS;
 
 /**
  * Unit test for aurora.AccountCacheImpl
@@ -39,10 +41,17 @@ public class AccountCacheImplTest {
   public void testUpdateExistingAccount() {
     Account account1 = new Account(1, 1000);
     accountCache.putAccount(account1);
+    await().atMost(1, SECONDS).until(() -> {
+      verify(accountListenerMock).accept(account1);
+      return true;
+    });
 
-    Account account2 = new Account(1, 2000); // Same id but updated balance
+    Account account2 = new Account(1, 2000);
     accountCache.putAccount(account2);
-    verify(accountListenerMock).accept(account2);
+    await().atMost(1, SECONDS).until(() -> {
+      verify(accountListenerMock).accept(account2);
+      return true;
+    });
 
     assertEquals(account2, accountCache.getAccountById(1));
   }
@@ -94,8 +103,10 @@ public class AccountCacheImplTest {
   public void testGetAccountByIdHitCountWithAccess() {
     Account account = new Account(1, 1000);
     accountCache.putAccount(account);
-    accountCache.getAccountById(1);
-    assertEquals(1, accountCache.getAccountByIdHitCount());
+    for (int i = 1; i <= 100; i++) {
+      accountCache.getAccountById(1);
+      assertEquals(i, accountCache.getAccountByIdHitCount());
+    }
   }
 
   @Test
