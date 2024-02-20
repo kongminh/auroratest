@@ -162,7 +162,10 @@ public class AccountCacheImplTest {
       assertEquals(top3AccountPair.size(), 2);
       List<Account> expectedTop3Accounts = top3AccountPair.get(0);
       List<Account> actualTop3Accounts = top3AccountPair.get(1);
-      assertEquals(expectedTop3Accounts, actualTop3Accounts);
+      assertEquals(expectedTop3Accounts.size(), actualTop3Accounts.size());
+      for (int i = 0; i < expectedTop3Accounts.size(); i++) {
+        assertEquals(expectedTop3Accounts.get(i), actualTop3Accounts.get(i));
+      }
     }
   }
 
@@ -191,7 +194,10 @@ public class AccountCacheImplTest {
     List<Account> actualTop3Accounts = accountCache.getTop3AccountsByBalance();
     List<Account> expectedTop3Accounts = getExpectedTop3Accounts(allAccounts);
     printTop3Accounts(expectedTop3Accounts, actualTop3Accounts);
-    assertEquals(expectedTop3Accounts, actualTop3Accounts);
+    assertEquals(expectedTop3Accounts.size(), actualTop3Accounts.size());
+    for (int i = 0; i < expectedTop3Accounts.size(); i++) {
+      assertEquals(expectedTop3Accounts.get(i), actualTop3Accounts.get(i));
+    }
     List<List<Account>> result = new ArrayList<List<Account>>();
     result.add(cloneListAccount(expectedTop3Accounts));
     result.add(cloneListAccount(actualTop3Accounts));
