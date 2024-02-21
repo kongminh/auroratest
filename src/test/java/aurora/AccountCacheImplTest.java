@@ -5,11 +5,15 @@ import static org.mockito.Mockito.*;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -27,7 +31,7 @@ public class AccountCacheImplTest {
   private Consumer<Account> accountListenerMock;
   private Random random;
   private final Lock printLock = new ReentrantLock();
-  private final Lock updateLock = new ReentrantLock();
+  private final ReentrantReadWriteLock updateLock = new ReentrantReadWriteLock();
 
   @Before
   public void setUp() {
@@ -127,20 +131,37 @@ public class AccountCacheImplTest {
         Account accountUpdate = new Account(random.nextInt(i), this.generateRandomBalance());
         accountCache.putAccount(accountUpdate);
       }
-      assertTop3AccountsAreCorrect(account, new ArrayList<Account>(accountCache.getAllAccounts()));
+      assertTop3AccountsAreCorrect(
+          accountCache.getTop3AccountsByBalance(),
+          new ArrayList<Account>(accountCache.getAllAccounts())
+        );
       assertEquals(account, accountCache.getAccountById(accountId));
+    }
+  }
+
+  class Result {
+    int taskId;
+    long time;
+    List<Account> actualTop3Accounts;
+    List<Account> allAccounts;
+
+    public Result(int taskId, long time, List<Account> actualTop3Accounts, List<Account> allAccounts) {
+      this.taskId = taskId;
+      this.time = time;
+      this.actualTop3Accounts = actualTop3Accounts;
+      this.allAccounts = allAccounts;
     }
   }
 
   @Test
   public void testzMultiThreadedPutAndGet() throws InterruptedException {
-    List<List<List<Account>>> top3AccountResults = new ArrayList<List<List<Account>>>();
     ExecutorService executor = Executors.newFixedThreadPool(50);
+    List<Callable<Result>> tasks = new ArrayList<>();
     for (int i = 0; i < 1000; i++) {
       int accountId = i;
-      executor.submit(() -> {
+      Callable<Result> task = () -> {
         Account account = new Account(accountId, this.generateRandomBalance());
-        updateLock.lock();
+        updateLock.writeLock().lock();
         try {
           accountCache.putAccount(account);
           if (accountId > 0) {
@@ -148,23 +169,39 @@ public class AccountCacheImplTest {
             Account accountUpdate = new Account(random.nextInt(accountId), this.generateRandomBalance());
             accountCache.putAccount(accountUpdate);
           }
-          List<List<Account>> top3AccountResult =
-            assertTop3AccountsAreCorrect(account, new ArrayList<Account>(accountCache.getAllAccounts()));
-          top3AccountResults.add(top3AccountResult);
         } finally {
-          updateLock.unlock();
+          updateLock.writeLock().unlock();
         }
-      });
+
+        List<Account> actualTop3Accounts;
+        List<Account> allAccounts;
+        updateLock.readLock().lock();
+        try {
+          actualTop3Accounts = accountCache.getTop3AccountsByBalance();
+          allAccounts = new ArrayList<Account>(accountCache.getAllAccounts());
+        } finally {
+          updateLock.readLock().unlock();
+        }
+        return new Result(accountId, System.currentTimeMillis(), actualTop3Accounts, allAccounts);
+      };
+      tasks.add(task);
     }
-    executor.shutdown();
-    executor.awaitTermination(1, TimeUnit.MINUTES);
-    for (List<List<Account>> top3AccountPair: top3AccountResults) {
-      assertEquals(top3AccountPair.size(), 2);
-      List<Account> expectedTop3Accounts = top3AccountPair.get(0);
-      List<Account> actualTop3Accounts = top3AccountPair.get(1);
-      assertEquals(expectedTop3Accounts.size(), actualTop3Accounts.size());
-      for (int i = 0; i < expectedTop3Accounts.size(); i++) {
-        assertEquals(expectedTop3Accounts.get(i), actualTop3Accounts.get(i));
+    List<Future<Result>> results = null;
+    try {
+      results = executor.invokeAll(tasks);
+    } catch (InterruptedException e) {
+      e.printStackTrace();
+    } finally {
+      // Shutdown ExecutorService
+      executor.shutdown();
+      executor.awaitTermination(1, TimeUnit.MINUTES);
+    }
+    for (Future<Result> result : results) {
+      try {
+        Result res = result.get();
+        assertTop3AccountsAreCorrect(res.actualTop3Accounts, res.allAccounts);
+      } catch (InterruptedException | ExecutionException e) {
+        e.printStackTrace();
       }
     }
   }
@@ -190,26 +227,13 @@ public class AccountCacheImplTest {
     }
   }
 
-  private List<List<Account>> assertTop3AccountsAreCorrect(Account newAccount, List<Account> allAccounts) {
-    List<Account> actualTop3Accounts = accountCache.getTop3AccountsByBalance();
+  private void assertTop3AccountsAreCorrect(List<Account> actualTop3Accounts, List<Account> allAccounts) {
     List<Account> expectedTop3Accounts = getExpectedTop3Accounts(allAccounts);
     printTop3Accounts(expectedTop3Accounts, actualTop3Accounts);
     assertEquals(expectedTop3Accounts.size(), actualTop3Accounts.size());
     for (int i = 0; i < expectedTop3Accounts.size(); i++) {
       assertEquals(expectedTop3Accounts.get(i), actualTop3Accounts.get(i));
     }
-    List<List<Account>> result = new ArrayList<List<Account>>();
-    result.add(cloneListAccount(expectedTop3Accounts));
-    result.add(cloneListAccount(actualTop3Accounts));
-    return result;
-  }
-
-  private List<Account> cloneListAccount(List<Account> source) {
-    List<Account> dest = new ArrayList<Account>();
-    for (Account acc : source) {
-      dest.add(new Account(acc.id, acc.getBalance()));
-    }
-    return dest;
   }
 
   private List<Account> getExpectedTop3Accounts(List<Account> allAccounts) {
